@@ -1,6 +1,9 @@
-import { Component, Input } from '@angular/core';
+import { Component, Input, SecurityContext, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { Message } from '../../models';
+import { marked } from 'marked';
+import hljs from 'highlight.js';
 
 @Component({
   selector: 'app-message',
@@ -12,7 +15,7 @@ import { Message } from '../../models';
         {{ message.role === 'user' ? 'U' : 'AI' }}
       </div>
       <div class="message-content">
-        <div [innerHTML]="formatContent(message.content)"></div>
+        <div [innerHTML]="formattedContent"></div>
         @if (message.isStreaming) {
           <div class="typing-indicator">
             <span></span><span></span><span></span>
@@ -23,15 +26,45 @@ import { Message } from '../../models';
   `,
   styles: []
 })
-export class MessageComponent {
+export class MessageComponent implements OnChanges {
   @Input({ required: true }) message!: Message;
+  formattedContent: SafeHtml = '';
 
-  formatContent(content: string): string {
-    // Basic markdown-like formatting
-    return content
-      .replace(/\n/g, '<br>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  constructor(private sanitizer: DomSanitizer) {
+    // Configure marked with highlight.js using renderer hooks
+    const renderer = new marked.Renderer();
+    
+    renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          const highlighted = hljs.highlight(text, { language: lang }).value;
+          return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+        } catch (err) {
+          console.error('Highlight error:', err);
+        }
+      }
+      const highlighted = hljs.highlightAuto(text).value;
+      return `<pre><code class="hljs">${highlighted}</code></pre>`;
+    };
+
+    marked.setOptions({
+      renderer,
+      breaks: true,
+      gfm: true
+    });
+  }
+
+  ngOnChanges(): void {
+    this.formattedContent = this.formatContent(this.message.content);
+  }
+
+  private formatContent(content: string): SafeHtml {
+    try {
+      const html = marked.parse(content) as string;
+      return this.sanitizer.sanitize(SecurityContext.HTML, html) || '';
+    } catch (err) {
+      console.error('Markdown parsing error:', err);
+      return content;
+    }
   }
 }

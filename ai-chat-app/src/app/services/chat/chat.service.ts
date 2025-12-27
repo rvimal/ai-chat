@@ -95,90 +95,63 @@ export class ChatService {
     });
   }
 
-  // Send message with streaming support
+  // Send message with streaming support using HttpClient
   streamMessage(request: ChatRequest): Observable<string> {
     const geminiRequest: GeminiRequest = {
       contents: [
         {
           parts: [{ text: request.message }]
         }
-      ],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      }
+      ]
     };
+
+    const headers = new HttpHeaders({
+      'Content-Type': 'application/json',
+    });
 
     const url = `${environment.apiUrl}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
 
     return new Observable(observer => {
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(geminiRequest),
-      })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          
-          const reader = response.body?.getReader();
-          const decoder = new TextDecoder();
-
-          if (!reader) {
-            throw new Error('No response body');
-          }
-
-          let buffer = '';
-
-          const readStream = (): void => {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                observer.complete();
-                return;
-              }
-
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              
-              // Keep the last incomplete line in the buffer
-              buffer = lines.pop() || '';
-
-              lines.forEach(line => {
-                if (line.startsWith('data: ')) {
-                  const data = line.substring(6).trim();
-                  
-                  if (!data || data === '[DONE]') {
-                    return;
-                  }
-                  
-                  try {
-                    const parsed: GeminiResponse = JSON.parse(data);
-                    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                    
-                    if (text) {
-                      observer.next(text);
-                    }
-                  } catch (e) {
-                    // Skip invalid JSON
-                    console.warn('Failed to parse SSE data:', e);
-                  }
+      this.http.post(url, geminiRequest, {
+        headers,
+        responseType: 'text',
+        observe: 'events',
+        reportProgress: true
+      }).subscribe({
+        next: (event: any) => {
+          if (event.type === 3) { // HttpEventType.DownloadProgress
+            const responseText = event.partialText || '';
+            const lines = responseText.split('\n');
+            
+            lines.forEach((line: string) => {
+              if (line.startsWith('data: ')) {
+                const data = line.substring(6).trim();
+                
+                if (!data || data === '[DONE]') {
+                  return;
                 }
-              });
-
-              readStream();
-            }).catch(error => {
-              observer.error(error);
+                
+                try {
+                  const parsed: GeminiResponse = JSON.parse(data);
+                  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                  
+                  if (text) {
+                    observer.next(text);
+                  }
+                } catch (e) {
+                  // Skip invalid JSON
+                  console.warn('Failed to parse SSE data:', e);
+                }
+              }
             });
-          };
-
-          readStream();
-        })
-        .catch(error => {
+          } else if (event.type === 4) { // HttpEventType.Response
+            observer.complete();
+          }
+        },
+        error: (error) => {
           observer.error(error);
-        });
+        }
+      });
     });
   }
 

@@ -19,7 +19,10 @@
     "@angular/router": "^19.2.0",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@popperjs/core": "^2.11.8",
+    "@types/marked": "^5.0.2",
     "bootstrap": "^5.3.8",
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.1",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"
