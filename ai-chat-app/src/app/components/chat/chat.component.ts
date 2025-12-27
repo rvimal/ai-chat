@@ -159,22 +159,37 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
 
     this.sessionService.addMessage(this.activeConversation.id, assistantMessage);
 
-    // Use mock service for now
-    this.chatService.mockSendMessage({
+    // Use real API with streaming support
+    this.chatService.streamMessage({
       message: messageToSend,
       conversationId: this.activeConversation.id
     }).pipe(takeUntil(this.destroy$))
       .subscribe({
-        next: (response) => {
+        next: (chunk) => {
           if (this.activeConversation) {
+            const currentMessage = this.activeConversation.messages.find(
+              m => m.id === assistantMessage.id
+            );
+            const newContent = (currentMessage?.content || '') + chunk;
             this.sessionService.updateMessage(
               this.activeConversation.id,
               assistantMessage.id,
-              response.message.content
+              newContent
             );
             this.shouldScrollToBottom = true;
           }
+        },
+        complete: () => {
+          if (this.activeConversation) {
+            const message = this.activeConversation.messages.find(
+              m => m.id === assistantMessage.id
+            );
+            if (message) {
+              message.isStreaming = false;
+            }
+          }
           this.isLoading = false;
+          this.shouldScrollToBottom = true;
         },
         error: (error) => {
           console.error('Error sending message:', error);

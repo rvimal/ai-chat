@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
 import { McpService } from '../../services/mcp/mcp.service';
+import { ChatService } from '../../services/chat/chat.service';
 import { McpServer } from '../../models';
 
 @Component({
@@ -81,26 +82,30 @@ import { McpServer } from '../../models';
       <!-- API Configuration -->
       <div class="card mb-4">
         <div class="card-header">
-          <h5 class="mb-0">LLM API Configuration</h5>
+          <h5 class="mb-0">Gemini API Configuration</h5>
         </div>
         <div class="card-body">
           <div class="mb-3">
-            <label class="form-label">API Endpoint</label>
-            <input 
-              type="text" 
-              class="form-control" 
-              placeholder="https://api.example.com/chat"
-              [(ngModel)]="apiEndpoint">
-            <small class="text-muted">Configure your LLM API endpoint</small>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">API Key</label>
+            <label class="form-label">Gemini API Key</label>
             <input 
               type="password" 
               class="form-control" 
-              placeholder="Enter API key"
+              placeholder="Enter your Gemini API key"
               [(ngModel)]="apiKey">
+            <small class="text-muted">
+              Get your API key from 
+              <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>
+            </small>
           </div>
+          @if (apiKey) {
+            <div class="alert alert-success">
+              <small>✓ API Key is configured</small>
+            </div>
+          } @else {
+            <div class="alert alert-warning">
+              <small>⚠ API Key is required to use the chat</small>
+            </div>
+          }
           <button class="btn btn-primary" (click)="saveApiConfig()">
             Save Configuration
           </button>
@@ -124,6 +129,7 @@ import { McpServer } from '../../models';
 })
 export class SettingsComponent implements OnInit, OnDestroy {
   private mcpService = inject(McpService);
+  private chatService = inject(ChatService);
   private destroy$ = new Subject<void>();
 
   servers: McpServer[] = [];
@@ -136,7 +142,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     capabilities: []
   };
 
-  apiEndpoint = '';
   apiKey = '';
 
   ngOnInit(): void {
@@ -146,9 +151,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.servers = servers;
       });
 
-    // Load saved API config
-    this.apiEndpoint = localStorage.getItem('api-endpoint') || '';
-    this.apiKey = localStorage.getItem('api-key') || '';
+    // Load saved API key
+    this.apiKey = this.chatService.getApiKey();
   }
 
   ngOnDestroy(): void {
@@ -195,7 +199,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   saveApiConfig(): void {
     localStorage.setItem('api-endpoint', this.apiEndpoint);
-    localStorage.setItem('api-key', this.apiKey);
-    alert('API configuration saved!');
-  }
+    this.chatService.setApiKey(this.apiKey);
+    alert('Gemini API key saved successfully
 }
