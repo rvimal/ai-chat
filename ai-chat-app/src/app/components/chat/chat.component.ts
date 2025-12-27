@@ -52,7 +52,38 @@ import { Conversation, Message } from '../../models';
       </div>
     </div>
   `,
-  styles: []
+  styles: [`
+    :host {
+      display: flex;
+      flex: 1;
+      height: 100%;
+    }
+    
+    .main-chat {
+      width: 100%;
+    }
+    
+    .messages-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 2rem;
+    }
+    
+    .messages-container > * {
+      width: 100%;
+      max-width: 800px;
+    }
+    
+    .input-container {
+      flex-shrink: 0;
+      width: 50%;
+      max-width: 800px;
+      margin: 0 auto;
+      border-top: none !important;
+      background-color: transparent !important;
+    }
+  `]
 })
 export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
   @ViewChild('messagesContainer') private messagesContainer!: ElementRef;

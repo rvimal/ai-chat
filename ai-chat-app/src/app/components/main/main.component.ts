@@ -12,6 +12,11 @@ import { ChatComponent } from '../chat/chat.component';
       <app-chat />
     </div>
   `,
-  styles: []
+  styles: [`
+    :host {
+      display: block;
+      height: 100vh;
+    }
+  `]
 })
 export class MainComponent {}
