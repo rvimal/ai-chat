@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subject, takeUntil } from 'rxjs';
 import { ThemeToggleComponent } from '../theme-toggle/theme-toggle.component';
@@ -108,6 +108,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
 
   conversations: Conversation[] = [];
   activeConversation: Conversation | null = null;
+  settingsClick = output<void>();
 
   ngOnInit(): void {
     this.sessionService.conversations$
@@ -152,7 +153,6 @@ export class SidebarComponent implements OnInit, OnDestroy {
   }
 
   openSettings(): void {
-    // Navigate to settings or open modal
-    alert('Settings feature coming soon!');
+    this.settingsClick.emit();
   }
 }

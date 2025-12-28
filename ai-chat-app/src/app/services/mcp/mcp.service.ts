@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { McpServer, McpConfig } from '../../models';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 @Injectable({
   providedIn: 'root'
@@ -15,9 +15,13 @@ export class McpService {
   public activeServer$ = this.activeServerSubject.asObservable();
 
   private mcpClients: Map<string, Client> = new Map();
+  private sessionIds: Map<string, string> = new Map();
+  private toolsCache: Map<string, any[]> = new Map();
 
   constructor() {
     this.loadServers();
+    this.loadSessionIds();
+    this.reconnectActiveServers();
   }
 
   private loadServers(): void {
@@ -25,22 +29,41 @@ export class McpService {
     if (saved) {
       this.serversSubject.next(JSON.parse(saved));
     } else {
-      // Default servers
-      this.serversSubject.next([
-        {
-          id: '1',
-          name: 'Default MCP Server',
-          description: 'Default Model Context Protocol server',
-          url: 'http://localhost:3000',
-          isActive: true,
-          capabilities: ['search', 'tools', 'prompts']
-        }
-      ]);
+      this.serversSubject.next([]);
     }
   }
 
   private saveServers(): void {
     localStorage.setItem('mcp-servers', JSON.stringify(this.serversSubject.value));
+  }
+
+  private loadSessionIds(): void {
+    const saved = localStorage.getItem('mcp-session-ids');
+    if (saved) {
+      const sessionData = JSON.parse(saved);
+      this.sessionIds = new Map(Object.entries(sessionData));
+    }
+  }
+
+  private saveSessionIds(): void {
+    const sessionData = Object.fromEntries(this.sessionIds);
+    localStorage.setItem('mcp-session-ids', JSON.stringify(sessionData));
+  }
+
+  private async reconnectActiveServers(): Promise<void> {
+    const activeServers = this.serversSubject.value.filter(s => s.isActive);
+    console.log('[MCP Service] Reconnecting active servers:', activeServers.length);
+    
+    for (const server of activeServers) {
+      try {
+        await this.connectToServer(server.id);
+        console.log(`[MCP Service] Reconnected to ${server.name}`);
+      } catch (error) {
+        console.error(`[MCP Service] Failed to reconnect to ${server.name}:`, error);
+        // Mark as inactive if reconnection fails
+        this.updateServer(server.id, { isActive: false });
+      }
+    }
   }
 
   getServers(): McpServer[] {
@@ -92,23 +115,46 @@ export class McpService {
     }
 
     try {
-      // Note: StdioClientTransport is for Node.js environments
-      // For browser-based applications, you'll need to use HTTP/WebSocket transport
-      // This is a placeholder for the MCP SDK integration
+      console.log('[MCP Service] Connecting to server:', server);
       
-      // Example of how to create a client (actual implementation depends on your setup):
-      // const transport = new StdioClientTransport({
-      //   command: server.url,
-      //   args: []
-      // });
-      // const client = new Client({ name: 'ai-chat-app', version: '1.0.0' }, { capabilities: {} });
-      // await client.connect(transport);
-      // this.mcpClients.set(serverId, client);
+      // Reuse existing session ID or generate new one
+      let sessionId = this.sessionIds.get(serverId);
+      if (!sessionId) {
+        sessionId = this.generateSessionId();
+        this.sessionIds.set(serverId, sessionId);
+        this.saveSessionIds();
+      }
+      console.log('[MCP Service] Using session ID:', sessionId);
+      
+      // Create MCP client
+      const client = new Client(
+        { name: 'ai-chat-app', version: '1.0.0' },
+        { capabilities: {} }
+      );
 
-      console.log(`Connected to MCP server: ${server.name}`);
+      // Use StreamableHTTP transport with session ID
+      const transport = new StreamableHTTPClientTransport(
+        new URL(server.url),
+        {
+          sessionId: sessionId
+        }
+      );
+      
+      console.log('[MCP Service] Initiating connection with session ID...');
+      await client.connect(transport);
+      
+      this.mcpClients.set(serverId, client);
+      console.log('[MCP Service] Connected successfully. Client stored.');
+
       this.updateServer(serverId, { isActive: true });
+      
+      // Preload tools into cache
+      await this.loadToolsIntoCache(serverId);
     } catch (error) {
-      console.error('Failed to connect to MCP server:', error);
+      console.error('[MCP Service] Failed to connect to MCP server:', error);
+      this.sessionIds.delete(serverId);
+      this.saveSessionIds();
+      this.updateServer(serverId, { isActive: false });
       throw error;
     }
   }
@@ -118,6 +164,9 @@ export class McpService {
     if (client) {
       await client.close();
       this.mcpClients.delete(serverId);
+      this.sessionIds.delete(serverId);
+      this.saveSessionIds();
+      this.toolsCache.delete(serverId);
       this.updateServer(serverId, { isActive: false });
     }
   }
@@ -126,7 +175,103 @@ export class McpService {
     return this.mcpClients.get(serverId);
   }
 
+  getSessionId(serverId: string): string | undefined {
+    return this.sessionIds.get(serverId);
+  }
+
+  private async loadToolsIntoCache(serverId: string): Promise<void> {
+    try {
+      console.log('[MCP Service] Loading tools into cache for server:', serverId);
+      const client = this.mcpClients.get(serverId);
+      
+      if (!client) {
+        console.warn('[MCP Service] No client found for preloading tools');
+        return;
+      }
+
+      const response = await client.listTools(
+        {
+          _meta: {
+            progressToken: 1
+          }
+        },
+        {}
+      );
+      
+      const tools = (response as any).tools || [];
+      this.toolsCache.set(serverId, tools);
+      console.log(`[MCP Service] Cached ${tools.length} tools for server ${serverId}`);
+    } catch (error) {
+      console.error(`[MCP Service] Failed to load tools into cache:`, error);
+      this.toolsCache.set(serverId, []);
+    }
+  }
+
+  async listTools(serverId: string): Promise<any[]> {
+    console.log('[MCP Service] listTools called for server:', serverId);
+    
+    const server = this.serversSubject.value.find(s => s.id === serverId);
+    
+    if (!server) {
+      console.error('[MCP Service] Server not found:', serverId);
+      throw new Error(`Server with id ${serverId} not found`);
+    }
+    
+    console.log('[MCP Service] Server found:', server);
+    console.log('[MCP Service] Server isActive:', server.isActive);
+    
+    if (!server.isActive) {
+      console.warn('[MCP Service] Server is not connected');
+      throw new Error(`Server ${server.name} is not connected`);
+    }
+    
+    // Check cache first
+    const cachedTools = this.toolsCache.get(serverId);
+    if (cachedTools && cachedTools.length > 0) {
+      console.log(`[MCP Service] Returning ${cachedTools.length} tools from cache`);
+      return cachedTools;
+    }
+    
+    const client = this.mcpClients.get(serverId);
+    console.log('[MCP Service] Client found:', !!client);
+    
+    if (!client) {
+      console.warn('[MCP Service] No client found for server');
+      return [];
+    }
+
+    try {
+      console.log('[MCP Service] Sending tools/list request...');
+      
+      // Use the MCP client's listTools method
+      const response = await client.listTools(
+        {
+          _meta: {
+            progressToken: 1
+          }
+        },
+        {}
+      );
+      
+      const tools = (response as any).tools || [];
+      console.log('[MCP Service] Tools response:', tools);
+      
+      // Update cache
+      this.toolsCache.set(serverId, tools);
+      
+      return tools;
+    } catch (error) {
+      console.error(`[MCP Service] Failed to list tools for server ${serverId}:`, error);
+      // Return empty array instead of throwing to gracefully handle errors
+      return [];
+    }
+  }
+
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  private generateSessionId(): string {
+    return `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 }

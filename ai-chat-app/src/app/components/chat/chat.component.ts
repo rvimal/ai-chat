@@ -166,11 +166,13 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     }).pipe(takeUntil(this.destroy$))
       .subscribe({
         next: (chunk) => {
+          console.log('[Chat Component] Received chunk:', chunk);
           if (this.activeConversation) {
             const currentMessage = this.activeConversation.messages.find(
               m => m.id === assistantMessage.id
             );
             const newContent = (currentMessage?.content || '') + chunk;
+            console.log('[Chat Component] Updating message with content:', newContent);
             this.sessionService.updateMessage(
               this.activeConversation.id,
               assistantMessage.id,
