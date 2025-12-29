@@ -13,6 +13,76 @@ import { McpServer } from '../../models';
     <div class="container py-4">
       <h2 class="mb-4">Settings</h2>
 
+      <!-- AI Model Configuration Section -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h5 class="mb-0">AI Model Configuration</h5>
+          <small class="text-muted">Configure AI providers and models</small>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Default AI Provider</label>
+              <select 
+                class="form-select"
+                [(ngModel)]="selectedProvider"
+                (change)="onProviderChange()">
+                @for (provider of getProvidersList(); track provider.key) {
+                  <option [value]="provider.key">{{ provider.value.name }}</option>
+                }
+              </select>
+            </div>
+            
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Default Model</label>
+              <select 
+                class="form-select"
+                [(ngModel)]="selectedModel"
+                (change)="onModelChange()">
+                @for (model of getAvailableModels(); track model.id) {
+                  <option [value]="model.id">{{ model.name }} - {{ model.description }}</option>
+                }
+              </select>
+            </div>
+          </div>
+
+          <!-- API Key Configuration for providers that need it -->
+          @if (requiresApiKey()) {
+            <div class="mb-3">
+              <label class="form-label">{{ getProviderName() }} API Key</label>
+              <div class="input-group">
+                <input 
+                  type="password" 
+                  class="form-control" 
+                  [(ngModel)]="apiKey"
+                  placeholder="Enter your API key">
+                <button 
+                  class="btn btn-outline-primary" 
+                  type="button"
+                  (click)="saveApiKey()">
+                  Save
+                </button>
+              </div>
+              <small class="form-text text-muted">
+                Your API key is stored securely in your browser's local storage
+              </small>
+            </div>
+          }
+
+          <!-- Current Configuration Display -->
+          <div class="alert alert-info">
+            <strong>Current Configuration:</strong><br>
+            Provider: {{ getProviderName() }}<br>
+            Model: {{ getCurrentModelName() }}<br>
+            @if (selectedProvider === 'ollama') {
+              <small class="text-muted">
+                Make sure Ollama is running at http://localhost:11434
+              </small>
+            }
+          </div>
+        </div>
+      </div>
+
       <!-- MCP Servers Section -->
       <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -187,55 +257,6 @@ import { McpServer } from '../../models';
         </div>
       </div>
 
-      <!-- API Configuration -->
-      <div class="card mb-4">
-        <div class="card-header">
-          <h5 class="mb-0">Gemini API Configuration</h5>
-        </div>
-        <div class="card-body">
-          <div class="mb-3">
-            <label class="form-label">Gemini API Key <span class="text-danger">*</span></label>
-            <div class="input-group">
-              <input 
-                type="password" 
-                class="form-control" 
-                placeholder="Enter your Gemini API key"
-                [(ngModel)]="apiKey"
-                #apiKeyInput>
-              <button 
-                class="btn btn-outline-secondary" 
-                type="button"
-                (click)="apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password'">
-                <i class="bi" [class.bi-eye]="apiKeyInput.type === 'password'" [class.bi-eye-slash]="apiKeyInput.type === 'text'"></i>
-              </button>
-            </div>
-            <small class="text-muted">
-              Get your API key from 
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-decoration-none">
-                Google AI Studio <i class="bi bi-box-arrow-up-right"></i>
-              </a>
-            </small>
-          </div>
-          @if (apiKey) {
-            <div class="alert alert-success d-flex align-items-center">
-              <i class="bi bi-check-circle-fill me-2"></i>
-              <small>API Key is configured</small>
-            </div>
-          } @else {
-            <div class="alert alert-warning d-flex align-items-center">
-              <i class="bi bi-exclamation-triangle-fill me-2"></i>
-              <small>API Key is required to use the chat</small>
-            </div>
-          }
-          <button 
-            class="btn btn-primary" 
-            (click)="saveApiConfig()"
-            [disabled]="!apiKey">
-            <i class="bi bi-save"></i> Save Configuration
-          </button>
-        </div>
-      </div>
-
       <!-- About -->
       <div class="card">
         <div class="card-header">
@@ -243,12 +264,13 @@ import { McpServer } from '../../models';
         </div>
         <div class="card-body">
           <p><strong>AI Chat Application</strong></p>
-          <p class="text-muted">A modern ChatGPT-like interface with Model Context Protocol (MCP) integration</p>
+          <p class="text-muted">A modern ChatGPT-like interface with Model Context Protocol (MCP) integration and multi-AI provider support</p>
           
           <div class="mb-3">
             <h6>Features:</h6>
             <ul class="small">
-              <li>Real-time streaming chat with Google Gemini</li>
+              <li>Real-time streaming chat with multiple AI providers (Ollama, Google Gemini)</li>
+              <li>Support for various open-source models via Ollama</li>
               <li>Markdown and code syntax highlighting</li>
               <li>MCP server integration for extended capabilities</li>
               <li>Dark/Light theme support</li>
@@ -262,6 +284,14 @@ import { McpServer } from '../../models';
               Model Context Protocol (MCP) allows AI assistants to connect to external tools and data sources,
               enabling features like file system access, database queries, web search, and more.
             </p>
+          </div>
+
+          <div class="mb-3">
+            <h6>Supported AI Providers:</h6>
+            <ul class="small">
+              <li><strong>Ollama:</strong> Run powerful open-source models locally (Llama, Mistral, CodeLlama, etc.)</li>
+              <li><strong>Google Gemini:</strong> Cloud-based AI models with advanced capabilities</li>
+            </ul>
           </div>
           
           <p class="mb-0">
@@ -288,7 +318,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
     capabilities: []
   };
 
+  // AI Model Configuration
+  selectedProvider: string = '';
+  selectedModel: string = '';
   apiKey = '';
+
   isTestingConnection = false;
   connectionTestResult: { success: boolean; message: string } | null = null;
   expandedServerId: string | null = null;
@@ -302,13 +336,56 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.servers = servers;
       });
 
-    // Load saved API key
-    this.apiKey = this.chatService.getApiKey();
+    // Load AI model configuration
+    this.selectedProvider = this.chatService.getCurrentProvider();
+    this.selectedModel = this.chatService.getCurrentModel();
+    this.apiKey = this.chatService.getApiKey(this.selectedProvider);
   }
 
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+  }
+
+  // AI Model Configuration Methods
+  getProvidersList(): Array<{ key: string, value: any }> {
+    const providers = this.chatService.getProviders();
+    return Object.keys(providers).map(key => ({ key, value: providers[key] }));
+  }
+
+  getAvailableModels() {
+    return this.chatService.getAvailableModels(this.selectedProvider);
+  }
+
+  onProviderChange(): void {
+    this.chatService.setProvider(this.selectedProvider);
+    this.selectedModel = this.chatService.getCurrentModel();
+    this.apiKey = this.chatService.getApiKey(this.selectedProvider);
+  }
+
+  onModelChange(): void {
+    this.chatService.setModel(this.selectedModel);
+  }
+
+  requiresApiKey(): boolean {
+    const providers = this.chatService.getProviders();
+    return providers[this.selectedProvider]?.requiresApiKey || false;
+  }
+
+  getProviderName(): string {
+    const providers = this.chatService.getProviders();
+    return providers[this.selectedProvider]?.name || this.selectedProvider;
+  }
+
+  getCurrentModelName(): string {
+    const models = this.getAvailableModels();
+    const model = models.find(m => m.id === this.selectedModel);
+    return model?.name || this.selectedModel;
+  }
+
+  saveApiKey(): void {
+    this.chatService.setApiKey(this.selectedProvider, this.apiKey);
+    alert(`${this.getProviderName()} API key saved successfully!`);
   }
 
   addServer(capabilitiesString: string): void {
@@ -379,11 +456,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (confirm('Are you sure you want to delete this server?')) {
       this.mcpService.deleteServer(id);
     }
-  }
-
-  saveApiConfig(): void {
-    this.chatService.setApiKey(this.apiKey);
-    alert('Gemini API key saved successfully!');
   }
 
   async toggleServerDetails(serverId: string): Promise<void> {

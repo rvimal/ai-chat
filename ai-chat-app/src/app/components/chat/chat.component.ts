@@ -5,13 +5,54 @@ import { Subject, takeUntil } from 'rxjs';
 import { MessageComponent } from '../message/message.component';
 import { SessionService } from '../../services/session/session.service';
 import { ChatService } from '../../services/chat/chat.service';
-import { Conversation, Message } from '../../models';
+import { Conversation, Message, AIModel } from '../../models';
 
 @Component({
   selector: 'app-chat',
   imports: [CommonModule, FormsModule, MessageComponent],
   template: `
     <div class="main-chat">
+      <!-- Model Selection Bar -->
+      <div class="model-selector-bar">
+        <div class="model-selector-container">
+          <label class="form-label me-2 mb-0">AI Model:</label>
+          <select 
+            class="form-select form-select-sm d-inline-block w-auto"
+            [(ngModel)]="selectedProvider"
+            (change)="onProviderChange()">
+            @for (provider of getProvidersList(); track provider.key) {
+              <option [value]="provider.key">{{ provider.value.name }}</option>
+            }
+          </select>
+          
+          <select 
+            class="form-select form-select-sm d-inline-block w-auto ms-2"
+            [(ngModel)]="selectedModel"
+            (change)="onModelChange()">
+            @for (model of availableModels; track model.id) {
+              <option [value]="model.id">{{ model.name }}</option>
+            }
+          </select>
+          
+          <div class="form-check form-switch d-inline-block ms-3">
+            <input 
+              class="form-check-input" 
+              type="checkbox" 
+              role="switch" 
+              id="mcpToolsSwitch"
+              [(ngModel)]="useMcpTools"
+              (change)="onMcpToolsToggle()">
+            <label class="form-check-label" for="mcpToolsSwitch">
+              🔧 MCP Tools
+            </label>
+          </div>
+          
+          <small class="text-muted ms-3">
+            {{ getCurrentModelDescription() }}
+          </small>
+        </div>
+      </div>
+
       <!-- Messages Area -->
       <div class="messages-container" #messagesContainer>
         @if (activeConversation && activeConversation.messages.length > 0) {
@@ -21,7 +62,7 @@ import { Conversation, Message } from '../../models';
         } @else {
           <div class="text-center mt-5">
             <h3 class="text-muted">Start a new conversation</h3>
-            <p class="text-muted">Send a message to begin chatting</p>
+            <p class="text-muted">Send a message to begin chatting with {{ selectedProvider }} - {{ getCurrentModelName() }}</p>
           </div>
         }
       </div>
@@ -30,9 +71,11 @@ import { Conversation, Message } from '../../models';
       <div class="input-container">
         <div class="d-flex gap-2">
           <textarea
+            #messageInput
             class="form-control chat-input"
             placeholder="Type your message..."
             [(ngModel)]="messageText"
+            (input)="adjustTextareaHeight()"
             (keydown.enter)="handleKeyDown($any($event))"
             [disabled]="isLoading"
             rows="1"></textarea>
@@ -61,13 +104,32 @@ import { Conversation, Message } from '../../models';
     
     .main-chat {
       width: 100%;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    
+    .model-selector-bar {
+      flex-shrink: 0;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--bs-border-color);
+      background-color: var(--bs-body-bg);
+    }
+    
+    .model-selector-container {
+      display: flex;
+      align-items: center;
+      max-width: 800px;
+      margin: 0 auto;
     }
     
     .messages-container {
+      flex: 1;
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding-bottom: 2rem;
+      padding: 2rem 1rem;
     }
     
     .messages-container > * {
@@ -80,13 +142,31 @@ import { Conversation, Message } from '../../models';
       width: 50%;
       max-width: 800px;
       margin: 0 auto;
+      padding: 1rem;
       border-top: none !important;
       background-color: transparent !important;
+    }
+    
+    .chat-input {
+      resize: none;
+      overflow-y: hidden;
+      min-height: 38px;
+      max-height: 200px;
+    }
+    
+    .input-container .d-flex {
+      align-items: flex-end;
+    }
+    
+    .input-container .btn {
+      height: 38px;
+      flex-shrink: 0;
     }
   `]
 })
 export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
   @ViewChild('messagesContainer') private messagesContainer!: ElementRef;
+  @ViewChild('messageInput') private messageInput!: ElementRef<HTMLTextAreaElement>;
 
   private sessionService = inject(SessionService);
   private chatService = inject(ChatService);
@@ -96,6 +176,14 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
   messageText = '';
   isLoading = false;
   private shouldScrollToBottom = false;
+  
+  // AI Model Selection
+  selectedProvider: string = '';
+  selectedModel: string = '';
+  availableModels: AIModel[] = [];
+  
+  // MCP Tools Toggle
+  useMcpTools: boolean = false;
 
   ngOnInit(): void {
     this.sessionService.activeConversation$
@@ -104,6 +192,14 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         this.activeConversation = conversation;
         this.shouldScrollToBottom = true;
       });
+    
+    // Initialize model selection
+    this.selectedProvider = this.chatService.getCurrentProvider();
+    this.selectedModel = this.chatService.getCurrentModel();
+    this.loadAvailableModels();
+    
+    // Load MCP tools preference
+    this.useMcpTools = localStorage.getItem('use_mcp_tools') === 'true';
   }
 
   ngAfterViewChecked(): void {
@@ -144,6 +240,7 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.sessionService.addMessage(this.activeConversation.id, userMessage);
     const messageToSend = this.messageText;
     this.messageText = '';
+    setTimeout(() => this.adjustTextareaHeight(), 0);
     this.isLoading = true;
     this.shouldScrollToBottom = true;
 
@@ -162,7 +259,8 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
     // Use real API with streaming support
     this.chatService.streamMessage({
       message: messageToSend,
-      conversationId: this.activeConversation.id
+      conversationId: this.activeConversation.id,
+      useMcpTools: this.useMcpTools
     }).pipe(takeUntil(this.destroy$))
       .subscribe({
         next: (chunk) => {
@@ -213,6 +311,48 @@ export class ChatComponent implements OnInit, OnDestroy, AfterViewChecked {
         this.messagesContainer.nativeElement.scrollHeight;
     } catch (err) {
       console.error('Error scrolling to bottom:', err);
+    }
+  }
+
+  // Model Selection Methods
+  getProvidersList(): Array<{ key: string, value: any }> {
+    const providers = this.chatService.getProviders();
+    return Object.keys(providers).map(key => ({ key, value: providers[key] }));
+  }
+
+  loadAvailableModels(): void {
+    this.availableModels = this.chatService.getAvailableModels(this.selectedProvider);
+  }
+
+  onProviderChange(): void {
+    this.chatService.setProvider(this.selectedProvider);
+    this.loadAvailableModels();
+    this.selectedModel = this.chatService.getCurrentModel();
+  }
+
+  onModelChange(): void {
+    this.chatService.setModel(this.selectedModel);
+  }
+  
+  onMcpToolsToggle(): void {
+    localStorage.setItem('use_mcp_tools', this.useMcpTools.toString());
+  }
+
+  getCurrentModelName(): string {
+    const model = this.availableModels.find(m => m.id === this.selectedModel);
+    return model?.name || this.selectedModel;
+  }
+
+  getCurrentModelDescription(): string {
+    const model = this.availableModels.find(m => m.id === this.selectedModel);
+    return model?.description || '';
+  }
+
+  adjustTextareaHeight(): void {
+    const textarea = this.messageInput?.nativeElement;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
     }
   }
 
