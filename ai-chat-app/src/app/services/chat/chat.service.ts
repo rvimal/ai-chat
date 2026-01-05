@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
+import axios, { AxiosRequestConfig } from 'axios';
 import { Observable } from 'rxjs';
 import { 
   ChatRequest, 
@@ -43,7 +43,6 @@ interface GeminiResponse {
   providedIn: 'root'
 })
 export class ChatService {
-  private http = inject(HttpClient);
   private mcpService = inject(McpService);
   
   // Current AI provider and model configuration
@@ -165,15 +164,15 @@ export class ChatService {
     };
 
     const provider = environment.aiProviders.ollama;
-    const headers = new HttpHeaders({
-      'Content-Type': 'application/json'
-    });
 
     return new Observable(observer => {
-      this.http.post<OllamaResponse>(provider.apiUrl, ollamaRequest, { headers })
-        .subscribe({
-          next: (response) => {
-            const content = response.message?.content || 'No response';
+      axios.post<OllamaResponse>(provider.apiUrl, ollamaRequest, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+        .then((response) => {
+            const content = response.data.message?.content || 'No response';
             
             const chatResponse: ChatResponse = {
               conversationId: request.conversationId || this.generateId(),
@@ -183,16 +182,15 @@ export class ChatService {
                 role: 'assistant',
                 content: content,
                 timestamp: new Date(),
-                tool_calls: response.message?.tool_calls
+                tool_calls: response.data.message?.tool_calls
               }
             };
             
             observer.next(chatResponse);
             observer.complete();
-          },
-          error: (error) => {
-            observer.error(error);
-          }
+        })
+        .catch((error) => {
+          observer.error(error);
         });
     });
   }
@@ -238,62 +236,57 @@ export class ChatService {
       }
 
       const provider = environment.aiProviders.ollama;
-      const headers = new HttpHeaders({
-        'Content-Type': 'application/json'
-      });
 
       let toolCallsDetected = false;
       let accumulatedResponse = '';
 
-      this.http.post(provider.apiUrl, ollamaRequest, {
-        headers,
-        responseType: 'text',
-        observe: 'events',
-        reportProgress: true
-      }).subscribe({
-        next: (event: any) => {
-          if (event.type === 3) { // HttpEventType.DownloadProgress
-            const responseText = event.partialText || '';
-            const newText = responseText.substring(accumulatedResponse.length);
-            accumulatedResponse = responseText;
-            
-            const lines = newText.split('\n').filter((line: string) => line.trim());
-            
-            lines.forEach((line: string) => {
-              try {
-                const parsed: OllamaResponse = JSON.parse(line);
-                
-                // Check for content
-                if (parsed.message?.content) {
-                  observer.next(parsed.message.content);
-                }
-
-                // Check for tool calls
-                if (parsed.message?.tool_calls && parsed.message.tool_calls.length > 0) {
-                  console.log('[Chat Service - Ollama] Tool calls detected:', parsed.message.tool_calls);
-                  toolCallsDetected = true;
-                  // Handle tool calls
-                  this.handleOllamaToolCalls(parsed.message.tool_calls, request, observer);
-                }
-
-                // Check if done
-                if (parsed.done && !toolCallsDetected) {
-                  observer.complete();
-                }
-              } catch (e) {
-                console.warn('[Chat Service - Ollama] Failed to parse response:', e, 'Line:', line);
-              }
-            });
-          } else if (event.type === 4) { // HttpEventType.Response
-            if (!toolCallsDetected) {
-              observer.complete();
-            }
-          }
+      axios.post(provider.apiUrl, ollamaRequest, {
+        headers: {
+          'Content-Type': 'application/json'
         },
-        error: (error) => {
-          console.error('[Chat Service - Ollama] HTTP Error:', error);
-          observer.error(error);
+        responseType: 'text',
+        onDownloadProgress: (progressEvent: any) => {
+          const responseText = progressEvent.event?.target?.responseText || '';
+          const newText = responseText.substring(accumulatedResponse.length);
+          accumulatedResponse = responseText;
+          
+          const lines = newText.split('\n').filter((line: string) => line.trim());
+          
+          lines.forEach((line: string) => {
+            try {
+              const parsed: OllamaResponse = JSON.parse(line);
+              
+              // Check for content
+              if (parsed.message?.content) {
+                observer.next(parsed.message.content);
+              }
+
+              // Check for tool calls
+              if (parsed.message?.tool_calls && parsed.message.tool_calls.length > 0) {
+                console.log('[Chat Service - Ollama] Tool calls detected:', parsed.message.tool_calls);
+                toolCallsDetected = true;
+                // Handle tool calls
+                this.handleOllamaToolCalls(parsed.message.tool_calls, request, observer);
+              }
+
+              // Check if done
+              if (parsed.done && !toolCallsDetected) {
+                observer.complete();
+              }
+            } catch (e) {
+              console.warn('[Chat Service - Ollama] Failed to parse response:', e, 'Line:', line);
+            }
+          });
         }
+      })
+      .then(() => {
+        if (!toolCallsDetected) {
+          observer.complete();
+        }
+      })
+      .catch((error) => {
+        console.error('[Chat Service - Ollama] HTTP Error:', error);
+        observer.error(error);
       });
     } catch (error) {
       console.error('[Chat Service - Ollama] Error in streamOllamaMessage:', error);
@@ -401,49 +394,44 @@ export class ChatService {
       };
       
       const provider = environment.aiProviders.ollama;
-      const headers = new HttpHeaders({
-        'Content-Type': 'application/json'
-      });
       
       let accumulatedResponse = '';
       
-      this.http.post(provider.apiUrl, continueRequest, {
-        headers,
-        responseType: 'text',
-        observe: 'events',
-        reportProgress: true
-      }).subscribe({
-        next: (event: any) => {
-          if (event.type === 3) {
-            const responseText = event.partialText || '';
-            const newText = responseText.substring(accumulatedResponse.length);
-            accumulatedResponse = responseText;
-            
-            const lines = newText.split('\n').filter((line: string) => line.trim());
-            
-            lines.forEach((line: string) => {
-              try {
-                const parsed: OllamaResponse = JSON.parse(line);
-                
-                if (parsed.message?.content) {
-                  observer.next(parsed.message.content);
-                }
-                
-                if (parsed.done) {
-                  observer.complete();
-                }
-              } catch (e) {
-                console.warn('[Chat Service - Ollama] Failed to parse continuation response:', e);
-              }
-            });
-          } else if (event.type === 4) {
-            observer.complete();
-          }
+      axios.post(provider.apiUrl, continueRequest, {
+        headers: {
+          'Content-Type': 'application/json'
         },
-        error: (error) => {
-          console.error('[Chat Service - Ollama] Error in continuation:', error);
-          observer.error(error);
+        responseType: 'text',
+        onDownloadProgress: (progressEvent: any) => {
+          const responseText = progressEvent.event?.target?.responseText || '';
+          const newText = responseText.substring(accumulatedResponse.length);
+          accumulatedResponse = responseText;
+          
+          const lines = newText.split('\n').filter((line: string) => line.trim());
+          
+          lines.forEach((line: string) => {
+            try {
+              const parsed: OllamaResponse = JSON.parse(line);
+              
+              if (parsed.message?.content) {
+                observer.next(parsed.message.content);
+              }
+              
+              if (parsed.done) {
+                observer.complete();
+              }
+            } catch (e) {
+              console.warn('[Chat Service - Ollama] Failed to parse continuation response:', e);
+            }
+          });
         }
+      })
+      .then(() => {
+        observer.complete();
+      })
+      .catch((error) => {
+        console.error('[Chat Service - Ollama] Error in continuation:', error);
+        observer.error(error);
       });
     } catch (error) {
       console.error('[Chat Service - Ollama] Error continuing with tool result:', error);
@@ -474,38 +462,36 @@ export class ChatService {
       }
     };
 
-    const headers = new HttpHeaders({
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    });
-
     const provider = environment.aiProviders.gemini;
     const model = request.modelId || this.currentModel;
     const url = `${provider.apiUrl}:generateContent`;
 
     return new Observable(observer => {
-      this.http.post<GeminiResponse>(url, geminiRequest, { headers })
-        .subscribe({
-          next: (response) => {
-            const content = response.candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
-            
-            const chatResponse: ChatResponse = {
-              conversationId: request.conversationId || this.generateId(),
-              message: {
-                id: this.generateId(),
-                conversationId: request.conversationId || '',
-                role: 'assistant',
-                content: content,
-                timestamp: new Date()
-              }
-            };
-            
-            observer.next(chatResponse);
-            observer.complete();
-          },
-          error: (error) => {
-            observer.error(error);
-          }
+      axios.post<GeminiResponse>(url, geminiRequest, {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        }
+      })
+        .then((response) => {
+          const content = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
+          
+          const chatResponse: ChatResponse = {
+            conversationId: request.conversationId || this.generateId(),
+            message: {
+              id: this.generateId(),
+              conversationId: request.conversationId || '',
+              role: 'assistant',
+              content: content,
+              timestamp: new Date()
+            }
+          };
+          
+          observer.next(chatResponse);
+          observer.complete();
+        })
+        .catch((error) => {
+          observer.error(error);
         });
     });
   }
@@ -556,68 +542,62 @@ export class ChatService {
         console.log('[Chat Service - Gemini] MCP tools not requested for this message');
       }
 
-      const headers = new HttpHeaders({
-        'Content-Type': 'application/json',
-      });
-
       const provider = environment.aiProviders.gemini;
       const url = `${provider.apiUrl}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
       let processedLength = 0;
       let isFunctionCallInProgress = false;
 
-      this.http.post(url, geminiRequest, {
-        headers,
-        responseType: 'text',
-        observe: 'events',
-        reportProgress: true
-      }).subscribe({
-        next: (event: any) => {
-          if (event.type === 3) { // HttpEventType.DownloadProgress
-            const responseText = event.partialText || '';
-            const newText = responseText.substring(processedLength);
-            processedLength = responseText.length;
-            
-            const lines = newText.split('\n');
-            
-            lines.forEach((line: string) => {
-              if (line.startsWith('data: ')) {
-                const data = line.substring(6).trim();
-                
-                if (!data || data === '[DONE]') {
-                  return;
-                }
-                
-                try {
-                  const parsed: GeminiResponse = JSON.parse(data);
-                  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                  
-                  if (text) {
-                    observer.next(text);
-                  }
-
-                  // Check for function calls
-                  const functionCall = (parsed.candidates?.[0]?.content as any)?.parts?.[0]?.functionCall;
-                  if (functionCall) {
-                    console.log('[Chat Service - Gemini] Function call requested:', functionCall);
-                    isFunctionCallInProgress = true;
-                    this.handleGeminiFunctionCall(functionCall, request, observer);
-                  }
-                } catch (e) {
-                  console.warn('[Chat Service - Gemini] Failed to parse SSE data:', e);
-                }
-              }
-            });
-          } else if (event.type === 4) { // HttpEventType.Response
-            if (!isFunctionCallInProgress) {
-              observer.complete();
-            }
-          }
+      axios.post(url, geminiRequest, {
+        headers: {
+          'Content-Type': 'application/json'
         },
-        error: (error) => {
-          console.error('[Chat Service - Gemini] HTTP Error:', error);
-          observer.error(error);
+        responseType: 'text',
+        onDownloadProgress: (progressEvent: any) => {
+          const buffer = progressEvent.event?.target?.responseText || '';
+          const newText = buffer.substring(processedLength);
+          processedLength = buffer.length;
+          
+          const lines = newText.split('\n');
+          
+          lines.forEach((line: string) => {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6).trim();
+              
+              if (!data || data === '[DONE]') {
+                return;
+              }
+              
+              try {
+                const parsed: GeminiResponse = JSON.parse(data);
+                const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                
+                if (text) {
+                  observer.next(text);
+                }
+
+                // Check for function calls
+                const functionCall = (parsed.candidates?.[0]?.content as any)?.parts?.[0]?.functionCall;
+                if (functionCall) {
+                  console.log('[Chat Service - Gemini] Function call requested:', functionCall);
+                  isFunctionCallInProgress = true;
+                  this.handleGeminiFunctionCall(functionCall, request, observer);
+                }
+              } catch (e) {
+                console.warn('[Chat Service - Gemini] Failed to parse SSE data:', e);
+              }
+            }
+          });
         }
+      })
+      .then(() => {
+        if (!isFunctionCallInProgress) {
+          observer.complete();
+        }
+      })
+      .catch((error) => {
+        console.error('[Chat Service - Gemini] HTTP Error:', error);
+        observer.error(error);
       });
     } catch (error) {
       console.error('[Chat Service - Gemini] Error in streamGeminiMessage:', error);
